@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no">
+<title>Sierpiński by Dice • LLN demo</title>
+<style>
+  :root{
+    --bg:#020503; --ink:#00ff66; --muted:#00aa55; --accent:#00ff66; --grid:#031a0f;
+    --A:#00ff66;   /* green  */
+    --B:#ff4d4d;   /* red    */
+    --C:#ffd400;   /* yellow */
+    --active:#00ffaa;
+  }
+  html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);
+    font-family:ui-monospace,Consolas,Monaco,monospace}
+  #wrap{display:grid;grid-template-rows:auto 1fr auto;min-height:100%}
+  #ui{
+    position:sticky; top:0; z-index:10; display:flex; flex-wrap:wrap; gap:10px; align-items:center;
+    padding:10px 12px; border-bottom:1px solid var(--grid);
+    background:linear-gradient(180deg, rgba(0,0,0,.35), transparent);
+  }
+  .brand{font-weight:700; letter-spacing:.3px}
+  .seg{display:flex; gap:8px; align-items:center; flex-wrap:wrap}
+  .pill,select,input[type="number"],input[type="range"]{
+    background:transparent; color:var(--ink); border:1px solid var(--grid); border-radius:999px; padding:6px 10px; accent-color:var(--accent)
+  }
+  .accent{border-color:color-mix(in oklab, var(--accent) 60%, var(--grid)); color:var(--accent); font-weight:700}
+  #stats{margin-left:auto; font-size:12px; color:var(--muted)}
+  #stage{position:relative; display:grid; grid-template-columns:1fr 380px; gap:12px; padding:12px}
+  canvas#cv{
+    width:min(96vw, 1200px); aspect-ratio:16/10; height:auto;
+    background:radial-gradient(ellipse at 50% 15%, rgba(0,255,102,.06), transparent 45%),
+               linear-gradient(180deg, var(--bg), color-mix(in oklab, var(--bg) 85%, var(--grid)));
+    border-radius:16px; box-shadow:0 0 0 1px var(--grid), 0 16px 44px rgba(0,0,0,.35)
+  }
+  aside{display:grid; gap:12px; align-content:start; max-height:calc(100vh - 110px); overflow:auto; padding-right:4px}
+  .card{border:1px solid var(--grid); border-radius:12px; padding:10px; background:rgba(0,0,0,.15)}
+  .title{font-size:12px; color:var(--muted); margin-bottom:6px}
+  .kv{display:grid; grid-template-columns:auto 1fr; gap:6px 10px; align-items:center; font-size:12px}
+  .bar{height:8px; border:1px solid var(--grid); border-radius:999px; overflow:hidden}
+  .fill{height:100%; width:0%}
+  .fill.A{background:var(--A)} .fill.B{background:var(--B)} .fill.C{background:var(--C)}
+  .die{display:grid; place-items:center; font-size:38px; line-height:1; height:64px}
+  .legend{font-size:12px; line-height:1.45}
+  .legend .sw{display:inline-block; width:10px; height:10px; border-radius:50%; transform:translateY(1px); margin:0 6px 0 2px}
+  footer{padding:10px 12px; border-top:1px solid var(--grid); color:var(--muted); font-size:12px}
+  .scanlines::after{content:""; position:absolute; inset:0; pointer-events:none; opacity:.06;
+    background-image:repeating-linear-gradient(to bottom, rgba(0,0,0,.65) 0 1px, transparent 1px 3px)}
+  .math{font-size:13px; line-height:1.45}
+  .math code{background:rgba(0,0,0,.18); padding:1px 4px; border-radius:6px; border:1px solid var(--grid)}
+  .formula{display:block; margin:6px 0}
+  .sep{height:1px; background:var(--grid); margin:8px 0}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="ui">
+    <div class="brand">Sierpiński by Dice • LLN demo</div>
+    <div class="seg">
+      <label>Steps/frame: <input id="batch" type="number" min="1" max="200000" step="100" value="6000" class="pill"></label>
+      <label>Point size: <input id="psize" type="range" min="1" max="3" value="1"></label>
+      <button id="pause" class="pill">Pause</button>
+      <button id="reset" class="pill">Reset</button>
+      <button id="save" class="pill accent">PNG</button>
+    </div>
+    <div id="stats">points: <span id="count">0</span> • FPS: <span id="fps">0</span></div>
+  </div>
+
+  <div id="stage" class="scanlines">
+    <canvas id="cv" width="1600" height="1000"></canvas>
+    <aside>
+      <div class="card">
+        <div class="title">Die (1–6) → vertex</div>
+        <div class="die" id="die">—</div>
+        <div class="kv">
+          <div>A (1–2)</div><div class="bar"><div class="fill A" id="pA"></div></div>
+          <div>B (3–4)</div><div class="bar"><div class="fill B" id="pB"></div></div>
+          <div>C (5–6)</div><div class="bar"><div class="fill C" id="pC"></div></div>
+        </div>
+        <div class="kv" style="margin-top:6px">
+          <div>Frequencies</div><div id="freqs">A=0.000 • B=0.000 • C=0.000</div>
+          <div>Deviation</div><div id="dev">max|p−1/3|=0.000</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="title">Legend</div>
+        <div class="legend">
+          Rule: start at any point <code>P₀</code>. Each step roll a fair die: 1–2→vertex A, 3–4→B, 5–6→C.
+          New point is the midpoint towards the chosen vertex: <code>P ← (P + V)/2</code>.
+          Colors: <span class="sw" style="background:var(--A)"></span><b>A</b> green,
+          <span class="sw" style="background:var(--B)"></span><b>B</b> red,
+          <span class="sw" style="background:var(--C)"></span><b>C</b> yellow.
+          This “random iteration” paints the unique IFS attractor — the Sierpiński triangle.
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="title">Formulae (live)</div>
+        <div id="math" class="math">
+          <span class="formula">n = <code id="m_n">0</code>  points</span>
+          <span class="formula">p = (pA, pB, pC) = (<code id="m_pA">0</code>, <code id="m_pB">0</code>, <code id="m_pC">0</code>)</span>
+          <div class="sep"></div>
+          <span class="formula">LLN target: <code>u = (1/3, 1/3, 1/3)</code></span>
+          <span class="formula">Std. error for one cell (binomial): <code>σ = √(u(1−u)/n)</code> → <code id="m_sigma">—</code></span>
+          <span class="formula">Max deviation: <code id="m_dev">—</code>  (∞-norm)</span>
+          <span class="formula">χ² to uniform: <code id="m_chi">—</code>  (df=2)</span>
+          <span class="formula">Shannon entropy H(p): <code id="m_H">—</code> bits (max = log₂3 ≈ 1.585)</span>
+          <div class="sep"></div>
+          <span class="formula">Similarity: copies <code>N=3</code>, ratio <code>r=1/2</code></span>
+          <span class="formula">Moran: Σ r^s = 1 ⇒ <code>3·(1/2)^s = 1</code></span>
+          <span class="formula">Hausdorff dim: <code>s = ln 3 / ln 2 ≈ 1.5849625</code></span>
+          <div class="sep"></div>
+          <span class="formula">Invariant measure: unique by Hutchinson’s theorem (IFS of contractions).</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="title">Sketch of proof</div>
+        <div style="font-size:12px; line-height:1.45">
+          1) Fair die ⇒ independent choice of A,B,C with prob. 1/3 (LLN ⇒ frequencies → 1/3).<br>
+          2) Maps <em>f<sub>A,B,C</sub>(x)=(x+V)/2</em> are contractions (ratio 1/2). By Hutchinson’s theorem the IFS has a unique attractor (Sierpiński triangle) and an invariant measure.<br>
+          3) Random iteration converges almost surely to that attractor; the empirical distribution of points converges to the invariant measure (what you see).
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <footer>
+    Equilateral triangle; step: midpoint towards chosen vertex (similarity 1/2). Hausdorff dim: log(3)/log(2) ≈ 1.5849625; Lebesgue measure 0.
+  </footer>
+</div>
+
+<script>
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d', {alpha:true, desynchronized:true});
+const W=cv.width, H=cv.height, margin=60;
+
+const dieEl = document.getElementById('die');
+const pAEl = document.getElementById('pA'), pBEl=document.getElementById('pB'), pCEl=document.getElementById('pC');
+const freqsEl=document.getElementById('freqs'), devEl=document.getElementById('dev');
+const fpsEl=document.getElementById('fps'), countEl=document.getElementById('count');
+const batchEl=document.getElementById('batch'), psizeEl=document.getElementById('psize');
+const pauseBtn=document.getElementById('pause'), resetBtn=document.getElementById('reset'), saveBtn=document.getElementById('save');
+
+/* Formula elements */
+const m_n=document.getElementById('m_n'), m_pA=document.getElementById('m_pA'),
+      m_pB=document.getElementById('m_pB'), m_pC=document.getElementById('m_pC'),
+      m_sigma=document.getElementById('m_sigma'), m_dev=document.getElementById('m_dev'),
+      m_chi=document.getElementById('m_chi'), m_H=document.getElementById('m_H');
+
+function cssVar(name){ return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+/* Triangle always fits the grid */
+function makeTriangle(){
+  const baseByW = W - 2*margin;
+  const baseByH = (H - 2*margin) * 2 / Math.sqrt(3);
+  const base = Math.min(baseByW, baseByH);
+  const h = Math.sqrt(3)/2 * base;
+  const cx = W/2, topY = (H - h)/2;
+  const A = {x:cx,           y:topY};
+  const B = {x:cx - base/2,  y:topY + h};
+  const C = {x:cx + base/2,  y:topY + h};
+  return [A,B,C];
+}
+let tri = makeTriangle();
+
+function guides(){
+  ctx.clearRect(0,0,W,H);
+  ctx.save();
+  ctx.strokeStyle = cssVar("--grid"); ctx.lineWidth=1;
+  const step=50; ctx.globalAlpha=.6;
+  for(let x=margin; x<=W-margin; x+=step){ ctx.beginPath(); ctx.moveTo(x,margin); ctx.lineTo(x,H-margin); ctx.stroke(); }
+  for(let y=margin; y<=H-margin; y+=step){ ctx.beginPath(); ctx.moveTo(margin,y); ctx.lineTo(W-margin,y); ctx.stroke(); }
+  ctx.globalAlpha=1; ctx.lineWidth=2; ctx.strokeRect(margin,margin,W-2*margin,H-2*margin);
+  ctx.restore();
+}
+guides();
+
+/* Draw attractors and labels on top every frame */
+function drawAttractors(activeIdx=-1){
+  const labels = ["A","B","C"];
+  const col = [cssVar("--A"), cssVar("--B"), cssVar("--C")];
+  tri.forEach((p,i)=>{
+    ctx.save();
+    ctx.fillStyle = col[i];
+    ctx.beginPath(); ctx.arc(p.x,p.y,6,0,Math.PI*2); ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = cssVar("--muted");
+    ctx.font = "12px ui-monospace,Consolas,monospace";
+    const lx = p.x + (i===0 ? 10 : (i===1 ? 10 : -18));
+    const ly = p.y - 10;
+    ctx.fillText(labels[i], lx, ly);
+  });
+  if(activeIdx>=0){
+    ctx.save();
+    ctx.strokeStyle = cssVar("--active");
+    ctx.lineWidth = 2;
+    const p = tri[activeIdx];
+    ctx.beginPath(); ctx.arc(p.x,p.y,10,0,Math.PI*2); ctx.stroke();
+    ctx.restore();
+  }
+}
+
+/* State */
+let running=true, total=0, P={x: W/2, y:H/2};
+let counts=[0,0,0]; // A,B,C
+let activeIdx=-1;
+
+/* Die: 1–2→A, 3–4→B, 5–6→C */
+function rollDie(){
+  const r = Math.floor(Math.random()*6)+1;
+  dieEl.textContent = ["①","②","③","④","⑤","⑥"][r-1];
+  return (r<=2)?0:(r<=4)?1:2;
+}
+
+function shannon(p){
+  let h=0;
+  for(const x of p){ if(x>0) h -= x * (Math.log(x)/Math.LN2); }
+  return h;
+}
+
+function step(n){
+  const size = parseInt(psizeEl.value,10) || 1;
+  for(let i=0;i<n;i++){
+    activeIdx = rollDie();
+    counts[activeIdx]++;
+    const A = tri[activeIdx];
+    P = { x: 0.5*(P.x + A.x), y: 0.5*(P.y + A.y) };
+    ctx.fillStyle = activeIdx===0 ? cssVar("--A") : activeIdx===1 ? cssVar("--B") : cssVar("--C");
+    if(size===1) ctx.fillRect(P.x, P.y, 1, 1);
+    else ctx.fillRect(P.x-size/2, P.y-size/2, size, size);
+    total++;
+  }
+
+  // metrics (live)
+  const s = counts[0]+counts[1]+counts[2] || 1;
+  const pA = counts[0]/s, pB = counts[1]/s, pC = counts[2]/s;
+  pAEl.style.width = (pA*100).toFixed(1)+"%";
+  pBEl.style.width = (pB*100).toFixed(1)+"%";
+  pCEl.style.width = (pC*100).toFixed(1)+"%";
+  freqsEl.textContent = `A=${pA.toFixed(3)} • B=${pB.toFixed(3)} • C=${pC.toFixed(3)}`;
+  const dev = Math.max(Math.abs(pA-1/3), Math.abs(pB-1/3), Math.abs(pC-1/3));
+  devEl.textContent = `max|p−1/3|=${dev.toFixed(3)}`;
+
+  // formula panel numbers
+  m_n.textContent = s.toLocaleString('en-US');
+  m_pA.textContent = pA.toFixed(6);
+  m_pB.textContent = pB.toFixed(6);
+  m_pC.textContent = pC.toFixed(6);
+  const sigma = Math.sqrt((1/3)*(2/3)/s);
+  m_sigma.textContent = (sigma===Infinity? "—" : sigma.toExponential(3));
+  m_dev.textContent = dev.toFixed(6);
+
+  // Pearson chi-square to uniform: sum ( (obs-exp)^2 / exp ), here obs = n*p_i, exp = n/3
+  const chi = s * ( (pA-1/3)*(pA-1/3)/(1/3) + (pB-1/3)*(pB-1/3)/(1/3) + (pC-1/3)*(pC-1/3)/(1/3) );
+  m_chi.textContent = chi.toFixed(3);
+
+  // Entropy
+  m_H.textContent = shannon([pA,pB,pC]).toFixed(6);
+}
+
+let last=performance.now(), acc=0, frames=0, fps=0;
+function loop(now){
+  const dt = now-last; last=now; acc+=dt; frames++;
+  if(running){
+    const n = Math.max(1, Math.min(200000, parseInt(batchEl.value,10)||6000));
+    step(n);
+  }
+  drawAttractors(activeIdx);
+  if(acc>=500){ fps = Math.round(frames*1000/acc); frames=0; acc=0; fpsEl.textContent=String(fps); countEl.textContent=total.toLocaleString('ru-RU'); }
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+/* UI */
+pauseBtn.addEventListener('click', e=>{ running=!running; e.currentTarget.textContent = running ? "Pause" : "Resume"; });
+resetBtn.addEventListener('click', ()=>{
+  running=false; pauseBtn.textContent="Resume";
+  total=0; counts=[0,0,0]; dieEl.textContent="—"; activeIdx=-1;
+  tri = makeTriangle(); guides(); drawAttractors();
+  countEl.textContent="0"; freqsEl.textContent="A=0.000 • B=0.000 • C=0.000";
+  pAEl.style.width=pBEl.style.width=pCEl.style.width="0%"; devEl.textContent="max|p−1/3|=0.000";
+
+  /* Clear formulae */
+  m_n.textContent="0"; m_pA.textContent="0"; m_pB.textContent="0"; m_pC.textContent="0";
+  m_sigma.textContent="—"; m_dev.textContent="—"; m_chi.textContent="—"; m_H.textContent="—";
+});
+saveBtn.addEventListener('click', ()=>{
+  const a = document.createElement('a');
+  a.download = `sierpinski_dice_${Date.now()}.png`;
+  a.href = cv.toDataURL("image/png"); a.click();
+});
+psizeEl.addEventListener('input', ()=> { guides(); drawAttractors(activeIdx); });
+</script>
+</body>
+</html>
